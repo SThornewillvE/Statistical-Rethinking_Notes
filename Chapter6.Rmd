@@ -1,0 +1,552 @@
+---
+title: 'Statistical Rethinking Problems: Chapter 6'
+author: "Simon Thornewill von Essen"
+date: "2024-03-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+```
+
+## 6e1
+
+List three mechanisms by which multiple regression can produce false inferences 
+about causal effects. 
+
+1. Multicolinearity - When two columns have almost the same information this 
+will cause the inference to become uncertain
+2. Post-treatment Bias - When conditioning on a result of the treatment it will
+make it look as if the treatment is not doing much when it may be
+3. Collider Bias - When conditioning on some covariates, they can open 
+unintended information which confound the effect that you're trying to measure.
+
+## 6e2
+
+For one of the mechanisms in the previous problem, provide an example of your 
+choice, perhaps from your own research.
+
+I think there can be an issue with non-compliance where you randomly assign 
+people to T/C but then there's the issue of whether or not the person actually
+follows the treatment that they have been given. If you were to perfectly know
+this somehow you would need to be careful about how you put this information
+into your model because it can result in post-treatment bias. 
+
+## 6e3
+ 
+List the four elemental confounds. Can you explain the conditional dependencies 
+of each?  
+
+1. The pipe: A -> B -> C
+  * A _||_ C | B
+2. The fork: A <- B -> C
+  * A _||_ C | B
+3. The collider: A -> B <- C
+  * A _||_ C
+  * A _|/|_ C | B
+4. The descendant: A -> B -> C, B -> D
+  * Conditioning on D will explain variation in B and so will weaken the 
+  relationship between A and C.
+
+## 6e4
+
+How is a biased sample like conditioning on a collider? Think of the example at 
+the open of the chapter. 
+
+I'm a bit confused by this question so I'm going to skip
+
+## 6m1
+
+Modify the DAG on page 186 to include the variable V, an unobserved cause of C 
+and Y:  C ← V → Y. Reanalyze the DAG. How many paths connect X to Y? Which must 
+be closed? Which variables should you condition on now?
+
+```{r}
+dag.6m1 = dagitty( "dag{
+                   U [unobserved]
+                   V [unobserved]
+                   U <- A -> C
+                   U -> B <- C
+                   U -> X -> Y
+                   C -> Y
+                   C <- V -> Y
+                   }")
+coordinates(dag.6m1) = list( x=c(A=0, B=0, C=0.5, U=-0.5, X=-0.5, Y=0.5, V=1), 
+                             y=c(A=0, B=1, C=0.5, U=0.5,  X=1.5,  Y=1.5, V=1))
+
+drawdag(dag.6m1) 
+```
+
+So, how many paths are there connecting X and Y?
+
+1. `X -> Y` (Obviously)
+2. `X <- U -> B <- C -> Y` - Blocked on collider B
+3. `X <- U -> B <- C <- V -> Y` - Blocked on collider B
+3. `X <- U <- A -> C -> Y` - Needs blocking
+3. `X <- U <- A -> C <- V -> Y` - Needs blocking
+
+Thus, I suppose that we can condition on C, that will block all of the back-door
+paths from X to Y. Furthermore, conditioning on C will improve precision of our 
+estimate of X on Y. 
+
+Ah no, that's wrong about `A -> C <- V` is a collider, so I shouldn't do that.
+Then I'd suppose that we should block on A instead. 
+
+Let's pass this DAG into `dagitty` and see what we get out. 
+
+```{r}
+adjustmentSets(dag.6m1, exposure = "X", outcome = "Y")
+```
+
+Hey! It correctly realises that we cant condition on `{U}` or `{C, V}` which are
+alternative adjustment sets and so spits out A.
+
+Can we get daggity to do more analysis?
+
+```{r}
+data.frame(paths(dag.6m1, from = "X", to = "Y"))
+```
+Cool! Using this we can see what paths are open and we can see which paths 
+should be closed. Using the adjustment sets above we can find that we can close
+the `X <- U <- A -> C -> Y` using A. 
+
+## 6m2 
+
+Sometimes, in order to avoid multicollinearity, people inspect pairwise 
+correlations among  predictors before including them in a model. This is a bad 
+procedure, because what matters is the conditional association, not the 
+association before the variables are included in the model. To highlight this, 
+consider the DAG X → Z → Y. Simulate data from this DAG so that the correlation  
+between X and Z is very large. Then include both in a model prediction Y. Do you 
+observe any  multicollinearity? Why or why not? What is different from the legs 
+example in the chapter?
+
+Ooh, this is a pretty cool example! Right, let's have a look...
+
+```{r}
+
+n = 1000
+X = rnorm(n)
+Z = 2*X + rnorm(n, sd=2)
+Y = 3*Z + rnorm(n, sd=2)
+
+d.6m2 = data.frame(X=X, Y=Y, Z=Z)
+
+m.6m2_X = quap(
+  alist(
+    Y ~ dnorm(mu, sigma),
+    mu <- a + bX*X,
+    a ~ dnorm(0, 0.2),
+    bX ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6m2
+)
+  
+m.6m2_Z = quap(
+  alist(
+    Y ~ dnorm(mu, sigma),
+    mu <- a + bZ*Z,
+    a ~ dnorm(0, 0.2),
+    bZ ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6m2
+)
+
+m.6m2_XZ = quap(
+  alist(
+    Y ~ dnorm(mu, sigma),
+    mu <- a + bX*X + bZ*Z,
+    a ~ dnorm(0, 0.2),
+    bX ~ dnorm(0, 0.5),
+    bZ ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6m2
+)
+
+plot(coeftab(m.6m2_X, m.6m2_Z, m.6m2_XZ), par=c("bX", "bZ"), prob=0.97)
+```
+
+I think the coeficients make sense for the uni-variate lm. Where `Y` is 
+definitely `3*Z` and `6*X` but in the regression where both `Z` and `X` terms
+are present it gets a little confused about the coefficient on `X`. 
+
+I suppose it's because we have information about `X` in `Z`, after accounting 
+for it there should be little information left over that `X` can explain and so
+its coeff is close to zero. 
+
+It's also interesting beause the multicolinearity problem gets worse the less 
+noise there is between Z and X. Yeah if I make the noise bigger then it gets 
+really precise answers for Z and it does alright for X. 
+
+## 6M3 
+
+Learning to analyze DAGs requires practice. For each of the four DAGs below, 
+state which  variables, if any, you must adjust for (condition on) to estimate 
+the total causal influence of X on Y. 
+
+```
+1. 
+  X -> Z -> Y
+  Z <- A -> Y
+  X -> Y
+```
+
+There seem to be no colliders in this DAG so you can just adjust for Z and that
+should be enough but you can also adjust for A to improve precision.
+
+```{r}
+dag.6m3.1 = dagitty( "dag{
+                   X <- Z -> Y
+                   Z <- A -> Y
+                   X -> Y
+                   }")
+
+adjustmentSets(dag.6m3.1, exposure = 'X', outcome = 'Y')
+```
+
+```
+2. 
+  X -> Z <- Y
+  X <- A -> Z
+  X -> Y
+```
+
+Z is a collider now for `X -> Z <- A` 
+
+```{r}
+dag.6m3.2 = dagitty( "dag{
+                   X -> Z <- Y
+                   Z <- A -> Y
+                   X -> Y
+                   }")
+
+adjustmentSets(dag.6m3.2, exposure = 'X', outcome = 'Y')
+```
+
+Yeah, it's as I thought. There's no adjustment set now because either way you
+will have a back-door pathway open from X to Y.
+
+```
+3. 
+  X -> Z <- Y
+  X <- A -> Z
+  X -> Y
+```
+
+For this one you don't need to adjust because the back door path is closed and
+A isn't important. 
+
+```
+4. 
+  X -> Z -> Y
+  X <- A -> Z
+  X -> Y
+```
+
+For this one you need to adjust for Z.
+
+## 6H1 
+
+Use the Waffle House data, data(WaffleDivorce), to find the total causal 
+influence of number of Waffle Houses on divorce rate. Justify your model or 
+models with a causal graph. 
+
+```{r}
+data(WaffleDivorce)
+d.6h1 = WaffleDivorce
+
+d.6h1$D = standardize(d.6h1$Divorce)
+d.6h1$M = standardize(d.6h1$Marriage)
+d.6h1$A = standardize(d.6h1$MedianAgeMarriage)
+d.6h1$W = standardize(d.6h1$WaffleHouses)
+d.6h1$S = standardize(d.6h1$South)
+```
+
+
+```{r}
+dag.6h1 = dagitty( "dag{
+                   D <- A <- S 
+                   S -> W -> D
+                   A -> M <- S
+                   M -> D
+                   }")
+
+adjustmentSets(dag.6h1, exposure = 'W', outcome = 'D')
+```
+
+We can see that if we propose the adjustment set as follows then we can 
+calculate the effect of W on D.
+
+```{r}
+m.6h1 = quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bW*W + bS*S,
+    a ~ dnorm(0, 0.2),
+    bW~ dnorm(0, 0.5),
+    bS ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h1
+)
+
+plot(m.6h1)
+```
+
+After conditioning on S we can see that there is no reliable signal between `W`
+and `D`.
+
+## 6H2
+
+Build a series of models to test the implied conditional independencies of the 
+causal graph  you used in the previous problem. If any of the tests fail, how do
+you think the graph needs to be  amended? Does the graph need more or fewer 
+arrows? Feel free to nominate variables that aren’t in  the data. 
+
+```{r}
+impliedConditionalIndependencies(dag.6h1)
+```
+
+Okay, so there are a number of conditional independancies that should be 
+possible in this DAG. 
+
+1. After knowing that a country is in the South, age of marriage and waffle 
+houses should be conditionally indep.
+2. After knowing Age of Marriage, Marriage Status and Wafflehouses, Divorce and
+being in the South should be conditionally indep.
+3. After knowing being in the south, marriage status and Wafflehouses should be
+conditionally indep. 
+
+All of these hypotheses are quite interesting, let's take a look! 
+
+```{r}
+m.6h2.1 = quap(
+  alist(
+    A ~ dnorm(mu, sigma),
+    mu <- a + bW*W + bS*S,
+    a ~ dnorm(0, 0.2),
+    bW~ dnorm(0, 0.5),
+    bS ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h1
+)
+
+plot(m.6h2.1)
+```
+Indeed, after we know that we are in the south, waffle houses gives no 
+information on the median age of marraige. 
+
+```{r}
+m.6h2.2 = quap(
+  alist(
+    M ~ dnorm(mu, sigma),
+    mu <- a + bW*W + bS*S,
+    a ~ dnorm(0, 0.2),
+    bW~ dnorm(0, 0.5),
+    bS ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h1
+)
+
+plot(m.6h2.2)
+```
+
+Likewise, once we know we're in the south we can't use W to infer the age of
+marriage...
+
+```{r}
+m.6h2.3 = quap(
+  alist(
+    S ~ dnorm(mu, sigma),
+    mu <- a + bW*W + bD*D + bM*M + bA*A,
+    a ~ dnorm(0, 0.2),
+    bW ~ dnorm(0, 0.5),
+    bD ~ dnorm(0, 0.5),
+    bA ~ dnorm(0, 0.5),
+    bM ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h1
+)
+
+plot(m.6h2.3)
+```
+And, furthermore, once we know everything else then S and D aren't meaningfully
+linked either. 
+
+All of this implies that the DAG is pretty sound. 
+
+## 6H3 
+
+The data in `data(foxes)` are 116 foxes from  30 different urban groups in 
+England. These foxes are like street gangs. Group size varies from 2 to  8 
+individuals. Each group maintains its own urban territory. Some territories are 
+larger than others.  The area variable encodes this information. Some 
+territories also have more avgfood than others.  We want to model the weight of 
+each fox.
+
+Use a model to infer the total causal influence of area on weight. Would 
+increasing the area  available to each fox make it heavier (healthier)? You 
+might want to standardize the variables. Regardless, use prior predictive 
+simulation to show that your model’s prior predictions stay within the  possible 
+outcome range. 
+
+```{r}
+data(foxes)
+d.6h3 = foxes
+
+d.6h3$F = standardize(d.6h3$avgfood)
+d.6h3$A = d.6h3$area
+d.6h3$W = standardize(d.6h3$weight)
+d.6h3$G = d.6h3$groupsize
+```
+
+Now that we have the data, let's take a look at the DAG. We can see that 
+`A -> F -> W` and `A -> F -> G -> W` are all open pipes and so if we regress
+one on the other I think that should give us the total effect...
+
+```{r}
+m.6h3 = quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- a + bA*A,
+    a ~ dnorm(0, 0.2),
+    bA~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h3
+)
+```
+
+Now that we have the model, we should do a prior predictive simulation...
+
+```{r}
+N <- 1000
+a_prior <- rnorm(N,0,0.2)
+bA_prior <- rnorm(N,0,0.5)
+sigma_prior <- rexp(N,1)
+
+seq_A <- seq( from=-2 , to=2 , length.out=30 )
+prior <- extract.prior(m.6h3)
+mu <- link( m.6h3 , data=list(A=seq_A) , post=prior )
+mu_mean <- apply( mu , 2 , mean )
+
+plot( NULL , xlim=c(-2,2) , ylim=c(-2.5,2.5) , xlab="Area (std)" , 
+      ylab="Weight (std)")
+for ( i in 1:100 )
+  lines( seq_A , mu[i,], col=col.alpha("black", 0.2))
+```
+
+Yeah, the prior predicions look reasonable...
+
+```{r}
+plot(coeftab(m.6h3), prob=0.89)
+```
+
+Anyway, it seems that the total effect of area on weight is very close to 0. 
+Which wasn't what I was expecting. 
+
+## 6H4 
+
+Now infer the causal impact of adding food to a territory. Would this make foxes 
+heavier?  Which covariates do you need to adjust for to estimate the total 
+causal influence of food? 
+
+
+```{r}
+
+m.6h4_A = quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- a + bA*A,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h3
+)
+
+m.6h4_G = quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- a + bG*G,
+    a ~ dnorm(0, 0.2),
+    bG ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h3
+)
+
+m.6h4_AG = quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- a + bA*A + bG*G,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    bG ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h3
+)
+
+m.6h4_F = quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- a + bF*F,
+    a ~ dnorm(0, 0.2),
+    bF ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h3
+)
+
+m.6h4_FG = quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- a + bF*F + bG*G,
+    a ~ dnorm(0, 0.2),
+    bF ~ dnorm(0, 0.5),
+    bG ~ dnorm(0, 0.5),
+    sigma ~ dunif(0, 100)
+  ),
+  data=d.6h3
+)
+
+plot(coeftab(m.6h4_AG, m.6h4_A, m.6h4_G, m.6h4_F, m.6h4_FG), 
+     par=c("bA", "bG", "bF"), prob=0.89)
+```
+It was a bit tricky to analyse this dataset because there was a masking effect
+from group size and area
+
+```{r}
+area.seq <- seq(from=1,to=6,by=0.5)
+pred.dat <- data.frame( A=area.seq , G=mean(d.6h3$G) )
+mu <- link( m.6h4_AG , data=pred.dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.ci <- apply( mu , 2 , PI )
+plot( W ~ A , data=d.6h3 , type="n" )
+lines( area.seq , mu.mean )
+lines( area.seq , mu.ci[1,] , lty=2 )
+lines( area.seq , mu.ci[2,] , lty=2 )
+```
+
+```{r}
+gs.seq <- seq(from=1,to=9,by=0.5)
+pred.dat <- data.frame( A=mean(d.6h3$area) , G=gs.seq )
+mu <- link( m.6h4_AG , data=pred.dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.ci <- apply( mu , 2 , PI )
+plot( W ~ G , data=d.6h3 , type="n" )
+lines( gs.seq , mu.mean )
+lines( gs.seq , mu.ci[1,] , lty=2 )
+lines( gs.seq , mu.ci[2,] , lty=2 )
+```

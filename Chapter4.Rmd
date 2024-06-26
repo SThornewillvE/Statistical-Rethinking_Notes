@@ -1,0 +1,478 @@
+---
+title: 'Statistical Rethinking Problems: Chapter 4'
+author: "Simon Thornewill von Essen"
+date: "2024-03-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rethinking)
+library(tidyverse)
+library(splines)
+```
+
+## 4e1
+
+In the model definition below, which line is the likelihood? 
+
+$$y_i \sim \textrm{N}(\mu, \sigma) \\
+\mu \sim \textrm{N}(0, 10) \\
+\sigma \sim \textrm{Exp}(1)
+$$
+
+The first line is the likelihood function, the other two are priors.
+
+## 4e2
+
+In the model definition from the last question, how many parameters are in the
+posterior distribution?
+
+Because there are only two priors and nothing defining shape of both priors
+having more than 1 value, there are only two dimensions in the posterior.
+
+## 4e3
+
+Using the same model definition as the last question, write down the appropriate
+form of Bayes' theorem that includes the proper likelihood and priors.
+
+$$P(\mu, \sigma | y_i) = \frac{P(y_i | \mu, \sigma)P(\mu)P(\sigma)}
+{\int \int P(y_i | \mu, \sigma)P(\mu)P(\sigma) d\mu d\sigma}$$
+
+Since we have multiple data points...
+
+$$P(\mu, \sigma | y_i) = \frac{\prod_i [P(y_i | \mu, \sigma)]P(\mu)P(\sigma)}
+{\int \int \prod_i [P(y_i | \mu, \sigma)]P(\mu)P(\sigma) d\mu d\sigma}$$
+
+## 4E4 
+
+In the model definition below, which line is the linear model? 
+
+$$ y_i \sim \textrm{N}(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta x_i \\
+\alpha \sim \textrm{N}(0, 10) \\
+\beta \sim \textrm{N}(0, 1) \\
+\sigma \sim \textrm{Exp}(2)
+$$
+
+The second line is the linear model.
+
+## 4E5
+
+How many parameters are there in the posterior distribution? 
+
+There are 3 and not 4 parameters. The 2nd line doesn't count as a parameter 
+although in most PPLs you can still treat it as such. 
+
+I.e. Variables which are deterministic combinations and not stochastic 
+relationships between priors are not "parameters", or rather "unobserved
+variables".
+
+## 4M1
+
+Perform a prior predictive check for the model below
+
+$$ y_i \sim \textrm{N}(\mu, \sigma) \\
+\mu \sim \textrm{N}(0, 10) \\
+\sigma \sim \textrm{Exp}(1)
+$$
+
+```{r}
+sigma = rexp(n = 2000, rate = 1)
+mu = rnorm(n = 2000, mean = 0, sd = 10)
+
+yi = rnorm(n = 2000, mean = mu, sd = sigma)
+
+dens(yi)
+```
+
+
+## 4M2
+
+Translate this model into a `quap` formula.
+
+```
+ch4.m2 = quap(
+  alist(
+    y ~ dnorm(mu, sigma),
+    mu ~ dnorm(0, 10),
+    sigma ~ dexp(1)
+  )
+)
+```
+
+That's easy enough but its a shame that `quap` doesn't seem to support prior
+predictive checks? 
+
+## 4M3
+
+Translate the `quap` formula below into a mathematical formula.
+
+```
+y ~ dnorm( mu, sigma), 
+mu <- a + b*x,  
+a ~ dnorm( 0, 10),  
+b ~ dunif( 0, 1), 
+sigma ~ dexp( 1) 
+```
+
+$$ y_i \sim \textrm{N}(\mu, \sigma) \\
+mu = a + bx_i \\
+a \sim \textrm{N}(0, 10) \\
+b \sim \textrm{Uniform}(0, 1) \\
+\sigma \sim \textrm{Exp}(1)
+$$
+
+## 4M4
+
+A sample of students is measured for height each year for 3 years. After the 
+third year, you want to fit a linear regression predicting height using year as 
+a predictor. Write down the mathematical model definition for this regression, 
+using any variable names and priors you choose. Be prepared to defend your 
+choice of priors. 
+
+$$ height_i \sim \textrm{N}(\mu, \sigma) \\
+\mu = a + bx_i \\
+a \sim \textrm{N}(175, 5) \\
+b \sim \textrm{Exp}(1) \\
+\sigma \sim \textrm{Exp}(1)
+$$
+
+I expect that height will be normally distributed with nosie sigma, which I 
+expect is exponentially distributed with a rate of 1, just a general prior.
+
+The mean is a sum of the initial measurement alpha plus some amount per year
+beta. I make beta exponentially distributed because I expect that students can't
+shrink over the course of 3 years.
+
+For alpha, 175cm +/- ~10cm sounds like a good general height for a student near
+adulthood to be.
+
+## 4M5
+
+Now suppose I remind you that every student got taller each year. Does this 
+information lead  you to change your choice of priors? How? 
+
+No, because I already took this into account, I'd need to do a prior predictive
+check to see if I incorporated that inforation correctly though.
+
+## 4M6 
+
+Now suppose I tell you that the variance among heights for students of the same age 
+is never  more than 64cm. How does this lead you to revise your priors?  
+
+I might truncate the exponential to never be more than 64 but luckily if I have
+an exponential with a rate of 1 then the probability of 64 is already really 
+low so I have negligible probability density over there anyway. The model should
+be able to funciton as is. 
+
+## 4M7
+
+Refit model m4.3 from the chapter, but omit the mean weight xbar this time. 
+Compare the  new model’s posterior to that of the original model. In particular, 
+look at the covariance among the  parameters. What is different? Then compare 
+the posterior predictions of both models.
+
+```{r}
+data(Howell1); d <- Howell1; d2 <- d[ d$age >= 18,] 
+xbar <- mean(d2$weight)
+
+# Original 
+m4.3 <- quap(
+  alist(height ~ dnorm( mu, sigma),
+        mu <- a + b*( weight - xbar),
+        a ~ dnorm( 178, 20),
+        b ~ dlnorm( 0, 1),
+        sigma ~ dunif( 0, 50)  ), data=d2)
+
+# Without Mean
+m4.3_4M6 <- quap(
+  alist(height ~ dnorm(mu, sigma),
+        mu <- a,
+        a ~ dnorm( 178, 20),
+        sigma ~ dunif( 0, 50)  ), data=d2)
+
+# List of Rethinking Functions
+# - precis
+# - vcov
+# - extract.samples
+# - link
+# - sim
+```
+
+Alright, now we want to check the vcov of both models
+
+```{r}
+vcov(m4.3)
+```
+
+```{r}
+vcov(m4.3_4M6)
+```
+
+It's not quite clear what to make of this right away... I suppose that the 
+variance of `a` and `sigma` is much bigger because the model doesn't have
+as much flexibility to model the change in heights over time.
+
+```{r}
+
+weight.seq <- seq( from=25, to=70, by=1)
+
+sim.m4.3 = link(m4.3, data = data.frame(weight=weight.seq))
+sim.m4.3_4M6 = link(m4.3_4M6, data.frame(weight=weight.seq))
+
+plot( height ~ weight, d2) 
+for (i in 1:100){
+  points( weight.seq, sim.m4.3[i,], pch=16, col=col.alpha('red', 0.1))
+  points( weight.seq, sim.m4.3_4M6[i,], pch=16, col=col.alpha('blue', 0.1))
+}
+ 
+```
+
+It's exactly like I thought above...
+
+# 4M8 
+
+In the chapter, we used 15 knots with the cherry blossom spline. Increase the 
+number of knots  and observe what happens to the resulting spline. Then adjust 
+also the width of the prior on the weights—change the standard deviation of the 
+prior and watch what happens. What do you think the combination of knot number 
+and the prior on the weights controls? 
+
+```{r}
+data("cherry_blossoms")
+d.cherry = cherry_blossoms
+d2.cherry = d.cherry[complete.cases(d.cherry$doy), ]
+
+num_knots = 20
+knot_list = quantile(d2.cherry$year, probs=seq(0, 1, length.out=num_knots))
+
+B = bs(d2.cherry$year, knots=knot_list[-c(1, num_knots)],
+       degree = 3,
+       intercept = TRUE)
+
+m4.7 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + B %*% w,
+    a ~ dnorm(100, 10),
+    w ~ dnorm(0, 10),
+    sigma ~ dexp(1)
+  ),
+  data=list(D=d2.cherry$doy, B=B),
+  start=list(w=rep(0, ncol(B)))
+)
+
+mu = link(m4.7)
+mu_PI = apply(mu, 2, PI, prob = 0.89)
+mu_mean = apply(mu, 2, mean)
+
+plot(d2.cherry$year, d2.cherry$doy, col=col.alpha(rangi2, 0.3), pch=16)
+shade(mu_PI, d2.cherry$year, col=col.alpha('black', 0.5))
+lines(d2.cherry$year, mu_mean)
+
+```
+
+By increasing the number of knots we can see that it becomes more flexible 
+allowing it to fit more subtleties in the data, it looks like it may be getting
+better at finding yearly trends.
+
+```{r}
+m4.7 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + B %*% w,
+    a ~ dnorm(100, 10),
+    w ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data=list(D=d2.cherry$doy, B=B),
+  start=list(w=rep(0, ncol(B)))
+)
+
+mu = link(m4.7)
+mu_PI = apply(mu, 2, PI, prob = 0.89)
+mu_mean = apply(mu, 2, mean)
+
+plot(d2.cherry$year, d2.cherry$doy, col=col.alpha(rangi2, 0.3), pch=16)
+shade(mu_PI, d2.cherry$year, col=col.alpha('black', 0.5))
+lines(d2.cherry$year, mu_mean)
+```
+
+The standard deviation on the weights determines how flat the prior is. The 
+flatter it is the more it relies on the information given to us by the data and
+the stricter it is surrounding 0 the more data it takes to convince us that the
+value of the weight is not 0. 
+
+# 4H1
+
+The weights listed below were recorded in the !Kung census, but heights were not 
+recorded for  these individuals. Provide predicted heights and 89% intervals for 
+each of these individuals. That is,  fill in the table below, using model-based 
+predictions. 
+
+```{r}
+kung = data.frame(
+  individual = seq(1, 5),
+  weight = c(46.95, 43.73, 64.78, 32.59, 54.63)
+)
+
+head(kung)
+```
+
+Right, so what this means is that we want to predict the height using the 
+weights from the model. 
+
+```{r}
+kung.samples = link(m4.3, data = kung)
+
+kung.mu = apply(kung.samples, 2, mean)
+kung.PI = apply(kung.samples, 2, PI, prob=0.89)
+
+kung$expect_height = kung.mu
+kung$interval_height_lower = kung.PI[1, ]
+kung$interval_height_upper = kung.PI[2, ]
+
+head(kung)
+```
+
+## 4h2
+
+Select out all the rows in the Howell1 data with ages below 18 years of age. 
+If you do it right,  you should end up with a new data frame with 192 rows in 
+it.  
+
+  a. Fit a linear regression to these data, using `quap`. Present and interpret 
+  the estimates. For  every 10 units of increase in weight, how much taller does 
+  the model predict a child gets?  
+  
+  b. Plot the raw data, with height on the vertical axis and weight on the 
+  horizontal axis. Superimpose the MAP regression line and 89% interval for the 
+  mean. Also superimpose the 89% interval  for predicted heights.
+  
+  c. What aspects of the model fit concern you? Describe the kinds of 
+  assumptions you would  change, if any, to improve the model. You don’t have to 
+  write any new code. Just explain what the  model appears to be doing a bad job 
+  of, and what you hypothesize would be a better model. 
+
+```{r}
+d3 <- Howell1[ Howell1$age < 18,] 
+d3.xbar <- mean(d3$weight)
+
+nrow(d3)
+```
+
+```{r}
+head(d3)
+```
+
+```{r}
+plot(d3$weight, d3$height)
+```
+
+Right, so now I need to fit a regression to this...
+
+```{r}
+d3.model = quap(
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + b*weight,
+    a ~ dnorm(60, 2.5),
+    b ~ dnorm(40, 10),
+    sigma ~ dexp(0.01) # Careful, this sometimes doesn't converge
+  ),
+  data=d3
+)
+
+precis(d3.model)
+```
+
+Anyway, we can see that for each 10 weights that the child gains it gains 
+something like 27.1 in height. 
+
+```{r}
+d3.samples = link(d3.model, data = data.frame(weight=seq(0, 45)))
+d3.sim = sim(d3.model, data = data.frame(weight=seq(0, 45)))
+d3.mu = apply(d3.samples, 2, mean)
+d3.PI = apply(d3.samples, 2, PI, prob=0.89)
+d3.sim.PI = apply(d3.sim, 2, PI, prob=0.89)
+
+plot(d3$weight, d3$height)
+lines(seq(0, 45), d3.mu)
+shade(d3.PI, seq(0, 45), col=col.alpha(rangi2, 0.4))
+shade(d3.sim.PI, seq(0, 45), col=col.alpha(rangi2, 0.2))
+```
+
+It's kind of weird to me that the confidence interval for the mean is so sharp,
+the predictive interval looks okay.
+
+Still, it's clearly not a linear fit so it so it would be good if the line did
+curve a little bit. 
+
+## 4h3 
+
+Suppose a colleague of yours, who works on allometry, glances at the practice 
+problems just  above. Your colleague exclaims, “That’s silly. Everyone knows 
+that it’s only the logarithm of body  weight that scales with height!” Let’s 
+take your colleague’s advice and see what happens.  
+
+  a. Model the relationship between height (cm) and the natural logarithm of 
+  weight (log-kg). Use  the entire Howell1 data frame, all 544 rows, adults and 
+  non-adults. Can you interpret the resulting  estimates?  
+  
+  b. Begin with this plot: plot( height ~ weight, data=Howell1). Then use 
+  samples from the quadratic approximate posterior of the model in (a) to 
+  superimpose on the plot: 
+    1. the  predicted mean height as a function of weight
+    2. the 97% interval for the mean
+    3. the 97%  interval for predicted heights
+
+```{r}
+Howell1$log_kg = log(Howell1$weight)
+
+plot(Howell1$log_kg, Howell1$height)
+```
+
+
+```{r}
+log_kg.bar = mean(Howell1$log_kg)
+
+Howell1.model = quap(
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + b*(log_kg - log_kg.bar),
+    a ~ dnorm(120, 5),
+    b ~ dnorm(10, 10),
+    sigma ~ dexp(0.01)
+  ),
+  Howell1
+)
+
+precis(Howell1.model)
+```
+
+The important thing to realise now is that the coefficients are expressed in 
+terms of log-weight and not weight itself. 
+
+So then the height of someone of average log weight is 138.23 and they gain/lose
+roughly 50cm for each unique of log-weight.
+
+```{r}
+Howell1.samples = link(Howell1.model, data = data.frame(log_kg=seq(1.5, 4, 0.01)))
+Howell1.sim = sim(Howell1.model, data = data.frame(log_kg=seq(1.5, 4, 0.01)))
+Howell1.mu = apply(Howell1.samples, 2, mean)
+Howell1.PI = apply(Howell1.samples, 2, PI, prob=0.97)
+Howell1.sim.PI = apply(Howell1.sim, 2, PI, prob=0.97)
+
+plot( height ~ weight, data=Howell1)
+lines(exp(seq(1.5, 4, 0.01)), Howell1.mu)
+shade(Howell1.PI, exp(seq(1.5, 4, 0.01)), col=col.alpha(rangi2, 0.4))
+shade(Howell1.sim.PI, exp(seq(1.5, 4, 0.01)), col=col.alpha(rangi2, 0.2))
+```
+
+Wow that's pretty impressive that the mean is so sharp, it's a great fit for the
+data! 
+
+The rest of the questions don't seem that interesting and I'm tired so I'm going
+to skip them for now. I may come back to them at another time.

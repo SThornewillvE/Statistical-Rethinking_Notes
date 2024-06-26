@@ -1,0 +1,311 @@
+---
+title: 'Statistical Rethinking: Chapter 7'
+author: "Simon Thornewill von Essen"
+date: "2024-04-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rethinking)
+library(reshape2)
+library(tidyverse)
+```
+
+This chapter was about introducing ways to measure model error such as `LOOCV` 
+`PSIS` and `WAIC`. There is a lot of code in this chapter but I'll only be using
+what I think will be useful for later. 
+
+A lot of the start of this code was going to be laden with theory, that's been 
+removed to my Obsidian vault. 
+
+# Entropy
+For a first, let's discuss Entropy. We can create a function that evaluates a
+vector of values that are passed to it like so;
+
+```{r}
+H = function(p){
+  H_tot = sum(p * log(p))
+  return(-H_tot)
+}
+
+H(c(0.3, 0.7))
+```
+
+# Kullback-Leibler Divergence
+Next, let's try and calculate the Kullback-Leibler divergence for these two 
+vectors `q` and `p`
+
+```{r}
+q = c(0.25, 0.75)
+p = c(0.3, 0.7)
+
+D_KL = function(q, p){
+  return(sum(p * log(p/q)))
+}
+
+D_KL(p, q)
+```
+
+Note that $D_{\textrm{KL}}$ does not return the same values if you reverse the
+vectors. If you consider if you use the amount of water on Mars vs Earth to 
+predict the amount on the other then you'd be more surprised seeing the earth
+after seeing Mars rather than seeing Mars after seeing the Earth. 
+
+This is because Mars has a lot less variability in terms of how much water/earth
+it's covered by. 
+
+#LPPD
+Now that we've gotten a hang of that, let's try and calculate log pointwise
+predictive density (LPPD). 
+
+I'll need to import some data for us to give this a shot, so give me a moment...
+
+```{r}
+sppnames = c("afarensis", "africanus", "habilis", "boisei", "rudolfensis",
+             "ergaster", "sapiens")
+brainvolcc = c(438, 452, 612, 521, 752, 871, 1350)
+masskg = c(37, 35.5, 34.5, 41.5, 55.5, 61, 53.5)
+
+d = data.frame(species=sppnames, brain=brainvolcc, mass=masskg)
+
+d$mass_std = (d$mass - mean(d$mass))/sd(d$mass)
+d$brain_std = (d$brain - mean(d$brain))/sd(d$brain)
+
+m7.1 = quap(
+  alist(
+    brain_std ~ dnorm(mu, exp(log_sigma)),
+    mu <- a + b*mass_std,
+    a ~ dnorm(0.5, 1),
+    b ~ dnorm(0, 10),
+    log_sigma ~ dnorm(0, 1)
+  ),
+  data=d
+)
+
+set.seed(1)
+logprob = sim(m7.1, ll=TRUE, n=1e4)
+n = ncol(logprob)
+ns = nrow(logprob)
+```
+
+Note that since we didn't pass a dataframe to `sim`, it just simulated one 
+datapoint for each type of spaien in the original dataframe 1k times. If I am
+understanding this correctly. (Note that we get the log-likelihood of each 
+point)
+
+This means for calculating the LPPD, that actually already brings us some of 
+the way there...
+
+We'll be using this equation:
+$$\textrm{lppd}(y, \Theta) = \sum_i log(\frac{1}{S}\sum_s p(y_i|\Theta_s))$$
+Let me try and apply this using my shitty crude ass code;
+
+```{r}
+lppd_tot = rep(0, 7)
+for(j in 1:n){
+  lppd_tot[j] = (log_sum_exp(logprob[, j])   - log(ns))
+}
+
+lppd_tot
+```
+
+Let's compare that to the code in the book...
+
+```{r}
+f = function(i) {return(log_sum_exp(logprob[, i]) - log(ns))}
+lppd_tot = sapply(1:n, f)
+
+lppd_tot
+```
+
+Note that the `log_sum_exp` function does the equivalent of
+$\textrm{log}\sum\textrm{exp(x)}$. i.e. It takes the log probabilities and 
+exponentiates them back into probabilities. Then we get the sum of the 
+probabilities before turning it back into a log probability again.
+
+Note that taking the log of `ns` and subtracting it means that we are dividing
+it. 
+
+In any case, the variable `lppd` (above) is a vector and it needs to be summed
+in order to get the lppd for all observations. 
+
+This is an interesting way to see what you can do with `sapply()`, where I've
+always thought of the number being the dimension that you pass but here it's 
+applied column-wise. 
+
+Anyway, this looks good... And now using the function from `rethinking`?
+
+```{r}
+set.seed(1)
+lppd(m7.1, n=1e4)
+```
+
+# Widely Applicable Information Criterion
+Alright, now we're getting into the important measures. In order to calculate
+WAIC, we need S (`ns`) samples from the posterior distribution...
+
+```{r}
+ns=1e3
+set.seed(1)
+post = extract.samples(m7.1, n=ns)
+```
+
+Now that we have the samples, we need to calculate the log-likelihood of each 
+data point `i` in terms of these samples.
+
+```{r}
+logprob = sapply(1:ns,
+                 function(s){
+                   mu = post$a[s] + post$b[s]*d$mass_std
+                   return(dnorm(d$brain_std, mu, exp(post$log_sigma[s]), log=TRUE))
+                 }
+                )
+
+dim(logprob)
+```
+
+So, now for each 7 observations we have the log likelihood of that datapoint 
+occurring for each sample from the posterior distribution ($\Theta_s$) (S)
+
+As before, we need to calculate the `LPPD`...
+
+```{r}
+n_cases = nrow(d)
+lppd_tot = sapply(1:n_cases,
+              function(i) log_sum_exp(logprob[i, ]) - log(ns)
+              )
+
+sum(lppd_tot)
+```
+
+We then need to calculate the penalty term for the WAIC (`pWAIC`)
+
+```{r}
+pWAIC = sapply(1:n_cases,
+               function(i) var(logprob[i,]))
+
+WAIC_tot = -2*(sum(lppd_tot) - sum(pWAIC))
+
+WAIC_tot
+```
+
+If we check this against the function, hopefully it's the same...
+
+```{r}
+set.seed(1)
+WAIC(m7.1, n=ns)
+```
+
+So, there we have it. The ways to calculate the log pointwise predictive density
+(lppd) and the widely applicable information criterion (WAIC). As mentioned 
+above, McElreath skips actually teaching how to do the Pareto smoothing.
+
+One further thing that I want to check is how to calculate that `std_err`...
+
+```{r}
+sqrt((n_cases-1) * var(-2*(lppd_tot - pWAIC)))
+```
+
+It took me a while to realise that McElreath was using Bessel's correction. 
+
+# Comparing Multiple Models
+
+So, we don't just want to look at one model but maybe we want to compare a 
+couple of them. Towards that end I'll need to fit a couple more...
+
+```{r}
+m7.2 = quap(
+  alist(
+    brain_std ~ dnorm(mu, exp(log_sigma)),
+    mu <- a + b[1]*mass_std + b[2]*mass_std^2,
+    a ~ dnorm(0.5, 1),
+    b ~ dnorm(0, 10),
+    log_sigma ~ dnorm(0, 1)
+  ),
+  data=d,
+  start=list(b=rep(0, 2))
+)
+
+m7.3 = quap(
+  alist(
+    brain_std ~ dnorm(mu, exp(log_sigma)),
+    mu <- a + b[1]*mass_std + b[2]*mass_std^2 + b[3]*mass_std^3,
+    a ~ dnorm(0.5, 1),
+    b ~ dnorm(0, 10),
+    log_sigma ~ dnorm(0, 1)
+  ),
+  data=d,
+  start=list(b=rep(0, 3))
+)
+```
+
+Instead of saying the a sapiens brain size is linearly proportional to its mass,
+I also created models which have 2nd and 3rd degree polynomial terms.
+
+```{r}
+set.seed(1)
+compare(m7.1, m7.2, m7.3, func=WAIC)
+```
+
+Note that in comparing these numbers, we don't need to fit k-folds for n-out, we
+can use each of the 3 estimated posteriors to get estimates of these values.
+
+We can also plot this comparison
+
+```{r}
+set.seed(1)
+plot(compare(m7.1, m7.2, m7.3, func=WAIC))
+```
+
+We can also look at the PSIS
+
+```{r}
+set.seed(1)
+plot(compare(m7.1, m7.2, m7.3, func=PSIS))
+```
+
+
+We can see that each model predicts worse than the 1st model which only has the
+linear term. Maybe as a practice exercise, I can try and use `ggplot2` to take
+a look and plot everything...
+
+```{r}
+d.pred = data.frame(mass_std=seq(-1, 1.5, 0.1))
+d.pred$poly1 = apply(link(m7.1, data=d.pred), 2, mean)
+d.pred$poly2 = apply(link(m7.2, data=d.pred), 2, mean)
+d.pred$poly3 = apply(link(m7.3, data=d.pred), 2, mean)
+
+d.pred = d.pred %>%
+  melt(id="mass_std", variable.name="poly", value.name="brain_std")
+
+ggplot(NULL) + 
+  geom_point(data=d, aes(x=mass_std, y=brain_std))+ 
+  geom_line(data=d.pred, aes(x=mass_std, y=brain_std, color=poly))
+```
+
+To be fair, the data is so sparse that it's difficult to really see which fit
+really should be the best. If we look at how each model prediction performs then
+we also find that the `WAIC` and `PSIS` metrics are also pretty unclear about
+this. We may apply Occam's razor and just take the lowest `poly` (linear). 
+
+We can compare the difference in standard error by using the following code;
+
+```{r}
+set.seed(1)
+compare(m7.1, m7.2, m7.3, func=WAIC)@dSE
+```
+
+We can also look at the weight of each point...
+
+```{r}
+set.seed(1)
+d$penalty1 = PSIS(m7.1, n=1e3, pointwise=TRUE)$penalty
+
+d %>%
+  select(c("species", "penalty1", "brain_std", "mass_std")) %>%
+  arrange(penalty1)
+```
+
+Haha, we can see that sapiens has a massive brain relative to its body-mass.

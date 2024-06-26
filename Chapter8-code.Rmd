@@ -1,0 +1,241 @@
+---
+title: 'Statistical Rethinking: Chapter 8'
+author: "Simon Thornewill von Essen"
+date: "2024-06-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rethinking)
+library(tidyverse)
+```
+
+In this file, we'll be going through some examples where we may use interactions
+in regression analysis.
+
+# Example 1: Africa GDP vs RoW
+
+Let's import the data and do some basic feature engineering. 
+
+```{r}
+data(rugged)
+d = rugged
+
+#make log version of outcome
+d$log_gdp = log(d$rgdppc_2000)
+
+#extract countries with GDP data
+dd = d[complete.cases(d$rgdppc_2000),]  
+
+#rescale variables
+dd$log_gdp_std = dd$log_gdp/ mean(dd$log_gdp)
+dd$rugged_std = dd$rugged/ max(dd$rugged) 
+
+# Add Africa Index Var
+dd$cid = ifelse(dd$cont_africa==1, 1, 2)
+```
+
+First, let's build a basic model and put some priors on it:
+
+```{r}
+m8.1 = quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a + b*(rugged_std - 0.215),
+    a ~ dnorm(1, 0.1),
+    b ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+  data=dd
+)
+```
+
+Now, let's take a look at prior predictive distribution.
+
+```{r}
+set.seed(1)
+prior = extract.prior(m8.1)
+```
+
+By using `extract.prior`, we get a random sample of 
+
+```{r}
+mu = link(m8.1, post=prior, 
+     data=data.frame(rugged_std=seq(from=-0.1, to=1.1, length.out=30)))
+
+# Plot the dimensions
+plot(NULL, xlim=c(0, 1), ylim=c(0.5, 1.5),
+     xlab="ruggedness", ylab="log GDP")
+abline(h=min(dd$log_gdp_std), lty=2)
+abline(h=max(dd$log_gdp_std), lty=2)
+for(i in 1:50) lines(seq(from=-0.1, to=1.1, length.out=30),
+                     mu[i,],
+                     col=col.alpha("black", 0.3))
+```
+Here, we're taking 50 random lines and plotting them against ruggedness. Note 
+that we get the expectation by passing both the prior to the link function but
+also passing the data that we want to plot over.
+
+What would happen if we wanted to get the actual results?
+
+```{r}
+post = extract.samples(m8.1)
+
+mu = link(m8.1, post=post, 
+     data=data.frame(rugged_std=seq(from=-0.1, to=1.1, length.out=30)))
+
+# Plot the dimensions
+plot(NULL, xlim=c(0, 1), ylim=c(0.5, 1.5),
+     xlab="ruggedness", ylab="log GDP")
+abline(h=min(dd$log_gdp_std), lty=2)
+abline(h=max(dd$log_gdp_std), lty=2)
+for(i in 1:50) lines(seq(from=-0.1, to=1.1, length.out=30),
+                     mu[i,],
+                     col=col.alpha("black", 0.3))
+```
+Now, to add the interaction, we need to add the `cid` to both `alpha` and 
+`beta`.
+
+```{r}
+m8.2 = quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b*(rugged_std - 0.215),
+    a[cid] ~ dnorm(1, 0.1),
+    b ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+  data=dd
+)
+
+m8.3 = quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*(rugged_std - 0.215),
+    a[cid] ~ dnorm(1, 0.1),
+    b[cid] ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+  data=dd
+)
+```
+
+```{r}
+plot(compare(m8.1, m8.2, m8.3))
+```
+
+We can see that among these models, `m8.3` performs the best. Even if it's the 
+most flexible model. We can see though that `m8.2` performs similarly and that
+`m8.1` way under-fits relative to these two. 
+
+Let's try and plot the outcome of `m8.3`
+
+```{r}
+d.A1 = dd[dd$cid==1, ]
+rugged_seq=seq(from=-0.1, to=1.1, length.out=30)
+mu = link(m8.3, data=data.frame(cid=1, 
+                                rugged_std=rugged_seq))
+mu_mean = apply(mu, 2, mean)
+mu_ci = apply(mu, 2, PI, prob=0.97)
+
+plot(d.A1$rugged_std, d.A1$log_gdp_std,
+     xlab="ruggedness (std)", ylab="log GDP (prop. mean)",
+     xlim=c(0, 1),
+     pch=16, col=rangi2)
+lines(rugged_seq, mu_mean, lwd=2)
+shade(mu_ci, rugged_seq, col=col.alpha(rangi2, 0.3))
+```
+```{r}
+d.A2 = dd[dd$cid==2, ]
+rugged_seq=seq(from=-0.1, to=1.1, length.out=30)
+mu = link(m8.3, data=data.frame(cid=2, 
+                                rugged_std=rugged_seq))
+mu_mean = apply(mu, 2, mean)
+mu_ci = apply(mu, 2, PI, prob=0.97)
+
+plot(d.A2$rugged_std, d.A2$log_gdp_std,
+     xlab="ruggedness (std)", ylab="log GDP (prop. mean)",
+     xlim=c(0, 1),
+     pch=16)
+lines(rugged_seq, mu_mean, lwd=2)
+shade(mu_ci, rugged_seq, col=col.alpha('black', 0.3))
+```
+We can see the interaction fully at work here. Furthermore, we can quickly plot
+how ruggedness changes the expected difference in log GDP.
+
+```{r}
+rugged_seq=seq(from=-0.2, to=1.2, length.out=30)
+
+muA = link(m8.3, dat=data.frame(cid=1, rugged_std=rugged_seq))
+muN = link(m8.3, dat=data.frame(cid=2, rugged_std=rugged_seq))
+delta = muA - muN
+delta_mean = apply(delta, 2, mean)
+delta_ci = apply(delta, 2, PI)
+
+plot(NULL,
+     xlab="ruggedness (std)", ylab="E(log GDP) diff (prop. mean)",
+     xlim=c(0, 1), ylim=c(-0.3, 0.2),
+     pch=16)
+abline(h=0, lty=2)
+lines(rugged_seq, delta_mean, lwd=2)
+shade(delta_ci, rugged_seq, col=col.alpha('black', 0.3))
+```
+
+We can see how when the country has no ruggedness, Africa is behind in terms of
+log GDP. But once we get to around 80% ruggedness, Africa matches the other
+countries in terms of GDP. 
+
+Note that it's not so easy to get this from the `precis` table itself. This is
+because now the outcome is dependent on more than one coefficient. 
+
+# Example 2: Tulip Bulbs
+Now, let's look at a continuous example. In the above example we had only 2
+categories but what happens if we create a continuous interaction?
+
+```{r}
+data(tulips)
+d = tulips
+
+d$blooms_std = d$blooms / max(d$blooms)
+d$water_cent = d$water- mean(d$water)
+d$shade_cent = d$shade- mean(d$shade)
+```
+
+We can now add the interaction as per in the notes.
+
+```{r}
+m8.5 = quap(
+  alist(
+    blooms_std ~ dnorm(mu, sigma),
+    mu <- a + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent,
+    a ~ dnorm(0.5, 0.25),
+    bw ~ dnorm(0, 0.25),
+    bs ~ dnorm(0, 0.25),
+    bws ~ dnorm(0, 0.25),
+    sigma ~ dexp(1)
+  ),
+  data=d
+)
+```
+
+We can plot the output using a triptych plot.
+
+```{r}
+par(mfrow=c(1, 3))
+for (s in -1:1){
+  mu = link(m8.5, data=data.frame(shade_cent=s,
+                                  water_cent=-1:1))
+  
+  idx = which(d$shade_cent==s)
+  plot(d$water_cent[idx], d$blooms_std[idx],
+       xlim=c(-1, 1), ylim=c(0, 1),
+       xlab="water", ylab="blooms",
+       pch=16, col=rangi2)
+  for (i in 1:20) lines(-1:1, mu[i,], col=col.alpha("black", 0.3))
+}
+```
+
+We can see how as the shade goes from -1 to 0 to 1, how the number of blooms
+decreases even when there is normally enough water when there is little shade.

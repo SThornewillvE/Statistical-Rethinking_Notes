@@ -1,0 +1,472 @@
+---
+title: 'Statistical Rethinking: Chapter 5'
+author: "Simon Thornewill von Essen"
+date: "2024-03-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rethinking)
+library(tidyverse)
+library(dagitty)
+```
+
+We can learn about the spurious association between divorce and waffle house
+concentration in a state.
+
+```{r}
+data("WaffleDivorce")
+d = WaffleDivorce
+
+d$D = standardize(d$Divorce)
+d$M = standardize(d$Marriage)
+d$A = standardize(d$MedianAgeMarriage)
+
+m5.1 = quap(
+  alist(
+    D ~ dnorm(mu_i, sigma),
+    mu_i <- a + bA*A,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data = d
+)
+
+m5.2 = quap(
+  alist(
+    D ~ dnorm(mu_i, sigma),
+    mu_i <- a + bM*M,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data = d
+)
+```
+
+We can sample the priors
+
+```{r}
+prior = extract.prior(m5.1)
+mu = link(m5.1, post=prior, data=list(A=c(-2, 2)))
+
+plot(NULL, xlim=c(-2, 2), ylim=c(-2, 2))
+for (i in 1:50)
+  lines(c(-2, 2), mu[i,], col=col.alpha("black", 0.4))
+```
+
+Looks pretty reasonable...
+
+Now, let's get some posterior predictions
+
+```{r}
+A_seq = seq(from=-3, to=3.2, length.out=30)
+mu = link(m5.1, data=list(A=A_seq))
+mu.mean = apply(mu, 2, mean)
+mu.PI = apply(mu, 2, PI)
+
+#plot it all
+plot(D ~ A, data=d, col=rangi2)
+lines(A_seq, mu.mean, lwd=2)
+shade(mu.PI, A_seq)
+
+```
+
+Now the section talks more about DAGs and we can see that there is an implied
+conditional independence implied by DAG2 while DAG1 doesn't.
+
+```{r}
+DMA_dag2 = dagitty('dag{ D <- A -> M}')
+impliedConditionalIndependencies(DMA_dag2)
+```
+
+```{r}
+DMA_dag1 = dagitty('dag{ D <- A -> M -> D}')
+impliedConditionalIndependencies(DMA_dag1)
+```
+
+We can test this using the following multiple regression:
+
+```{r}
+m5.3 = quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM*M + bA*A,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5), 
+    bA ~dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data=d
+)
+
+precis(m5.3)
+```
+
+We can plot the posterior distributions of the coefficients!
+
+```{r}
+plot(coeftab(m5.1, m5.2, m5.3), par=c("bA", "bM"), prob=0.97)
+```
+
+What we see here is that for model 5.2 we can see that there is an effect of
+marriage on divorce rate but this effect is gone in model 5.3. The reason for
+this is that when we condition on A then this effect disapears because of the
+common-cause of A. 
+
+i.e. Once we know the median age of marriage for a state then there is little 
+or no additional predictive power in also knowing the rate of marriage in that
+state.
+
+Next, let's generate some counterfactuals with some different models
+
+```{r}
+m5.3_A = quap(
+  alist(
+    ## A -> D <- M
+    D ~ dnorm(mu, sigma),
+    mu <- a +bM*M + bA*A,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1),
+    
+    ## A -> M
+    M ~ dnorm(mu_M, sigma_M),
+    mu_M <- aM + bAM*A,
+    aM ~ dnorm(0, 0.2),
+    bAM ~ dnorm(0, 0.5),
+    sigma_M ~ dexp(1)
+  ),
+  data = d
+)
+
+precis(m5.3_A)
+```
+
+Pretty cool how you can fit two models at the same time. 
+
+Next, we want to simulate what happens if we modulate A and see how that effects
+D and M. We can do this by sampling from the posterior based on this. 
+
+
+```{r}
+A_seq = seq(from=-2, to=2, length.out=30)
+
+sim_dat = data.frame(A=A_seq)
+s = sim(m5.3_A, data=sim_dat, vars=c("M", "D"))
+
+plot(sim_dat$A, colMeans(s$D), ylim=c(-2, 2), type="l",
+     xlab="manipulated A", ylab="counterfactual D")
+shade(apply(s$D, 2, PI), sim_dat$A)
+mtext("Total counterfactual effect of A on D")
+```
+
+We can see the total effect in the plot above. We can see that the effect of
+A on D is pretty big, but this is also the total effect so how much is 
+contributed through the `A -> M -> D` pathway?
+
+```{r}
+plot(sim_dat$A, colMeans(s$M), ylim=c(-2, 2), type="l",
+     xlab="manipulated A", ylab="counterfactual M")
+shade(apply(s$M, 2, PI), sim_dat$A)
+mtext("Total counterfactual effect of A -> M")
+```
+
+We can see some of the partial effect of `A -> M -> D` by just seeing the 
+`A -> M` effect above. This means that if `M -> D` is big then there will be a 
+lot of information transfered in this way as well. So, is this the case?
+
+```{r}
+sim_dat = data.frame(M=seq(from=-2, to=2, length.out=30), A=0)
+s = sim(m5.3_A, data=sim_dat, vars="D")
+
+plot(sim_dat$M, colMeans(s), ylim=c(-2, 2), type="l",
+     xlab="manipulated M", ylab="counterfactual D")
+shade(apply(s, 2, PI), sim_dat$M)
+mtext("Total counterfactual effect of M on D")
+```
+
+We can see that the effect is small so therefore the majority of the effect of
+`A -> D` comes through the direct `A -> D` pathway rather than through the other
+`A -> M -> D` one.
+
+Note that it's not possible for A to have an effect because it was 0 in every 
+case, representing the mean value for A. 
+
+So, what did the code do here? Let's have a look under the hood.
+
+```{r}
+# Using A_seq from before...
+
+# Sample all unobserved variables from posterior distribution
+post = extract.samples(m5.3_A)
+
+# For every sample in the posterior, simulate A
+M_sim = with(post,
+             sapply(1:30, 
+                    function(i){
+                      rnorm(1e3, aM+ bAM*A_seq[i], sigma_M)
+                    }))
+
+# We then calculate the distribution of D, using the sampled M and the same A
+D_sim = with(post,
+             sapply(1:30, 
+                    function(i){
+                      rnorm(1e3, a + 
+                              bA*A_seq[i] +
+                              bM*M_sim[,i], 
+                            sigma_M)
+                    }))
+
+```
+
+Apparently we'll talk a little about milk and masking now...
+
+```{r}
+data(milk)
+d.m = milk
+
+d.m$K = standardize( d.m$kcal.per.g)
+d.m$N = standardize( d.m$neocortex.perc)
+d.m$M = standardize( log(d.m$mass)) 
+
+dcc = d.m[complete.cases(d.m$K, d.m$N, d.m$M),]
+
+m5.5_draft = quap(
+  alist(K ~ dnorm( mu, sigma),
+        mu <- a + bN*N,
+        a ~ dnorm( 0, 1),
+        bN ~ dnorm( 0, 1),
+        sigma ~ dexp( 1)
+        ),
+  data=dcc
+) 
+
+prior = extract.prior( m5.5_draft)
+xseq = c(-2,2)
+mu = link( m5.5_draft, post=prior, data=list(N=xseq)) 
+
+plot( NULL, xlim=xseq, ylim=xseq)
+for (i in 1:50) 
+  lines( xseq, mu[i,], col=col.alpha("black",0.3)) 
+```
+
+Well that prior looks like garbage! 
+
+```{r}
+m5.5 = quap(
+  alist(K ~ dnorm( mu, sigma),
+        mu <- a + bN*N,
+        a ~ dnorm( 0, 0.2),
+        bN ~ dnorm( 0, 0.5),
+        sigma ~ dexp( 1)
+        ),
+  data=dcc
+) 
+
+prior = extract.prior( m5.5_draft)
+xseq = c(-2,2)
+mu = link( m5.5_draft, post=prior, data=list(N=xseq)) 
+
+plot( NULL, xlim=xseq, ylim=xseq)
+for (i in 1:50) 
+  lines( xseq, mu[i,], col=col.alpha("black",0.3)) 
+```
+That's better! 
+
+Let's check the posterior...
+
+```{r}
+xseq = seq( from=min(dcc$N)-0.15, to=max(dcc$N)+0.15, length.out=30)
+mu = link( m5.5, data=list(N=xseq))
+mu_mean = apply(mu,2,mean)  
+mu_PI = apply(mu,2,PI)
+plot( K ~ N, data=dcc)
+lines( xseq, mu_mean, lwd=2)
+shade( mu_PI, xseq)
+```
+We can now compare this against K and M...
+
+```{r}
+m5.6 = quap(
+  alist(
+    K ~ dnorm( mu, sigma),
+    mu <- a + bM*M,
+    a ~ dnorm( 0, 0.2),
+    bM ~ dnorm( 0, 0.5),
+    sigma ~ dexp( 1)  ),
+  data=dcc)  
+
+precis(m5.6) 
+```
+
+```{r}
+xseq = seq( from=min(dcc$N)-2, to=max(dcc$N)+2, length.out=30)
+mu = link( m5.6, data=list(M=xseq))
+mu_mean = apply(mu,2,mean)  
+mu_PI = apply(mu,2,PI)
+plot( K ~ M, data=dcc)
+lines( xseq, mu_mean, lwd=2)
+shade( mu_PI, xseq)
+```
+
+You can do a counterfactual analysis as well where you look at the trends while
+holding the other value constant at 0 but I'll skip this for now because it's
+getting a little repetitive to copy and paste all the time. 
+
+```{r}
+pairs( ~K + M + N, dcc)
+```
+
+```{r}
+m5.7 = quap(
+  alist(
+    K ~ dnorm( mu, sigma),
+    mu <- a + bN*N + bM*M,
+    a ~ dnorm( 0, 0.2),
+    bN ~ dnorm( 0, 0.5),
+    bM ~ dnorm( 0, 0.5),
+    sigma ~ dexp( 1)  ),
+  data=dcc)  
+
+precis(m5.7) 
+```
+
+Using the models above, we can create counter factual plots...
+
+```{r}
+xseq = seq(from=min(dcc$M)-0.15, to=max(dcc$M)+0.15, length.out=30)
+mu = link(m5.7, data=data.frame(M=xseq, N=0))
+mu_mean = apply(mu,2,mean)
+mu_PI = apply(mu,2,PI)
+plot(NULL, xlim=range(dcc$M), ylim=range(dcc$K), xlab="log body mass (std)",
+     ylab="kilocal per g (std)")
+lines( xseq, mu_mean, lwd=2)
+shade( mu_PI, xseq)  
+```
+
+```{r}
+xseq = seq(from=min(dcc$N)-0.15, to=max(dcc$N)+0.15, length.out=30)
+mu = link(m5.7, data=data.frame(N=xseq, M=0))
+mu_mean = apply(mu,2,mean)
+mu_PI = apply(mu,2,PI)
+plot( NULL, xlim=range(dcc$N), ylim=range(dcc$K), xlab="neocortex percent (std)",
+     ylab="kilocal per g (std)")
+lines(xseq, mu_mean, lwd=2)
+shade(mu_PI, xseq)  
+```
+
+Very good...
+
+Now, let's simulate a masking relationship so that we know what's going on under
+the hood. 
+
+let's consider the following DAG; `M -> K <- N` and `M -> N`
+
+```{r}
+## M -> K <- N
+## M -> N
+n = 100
+M = rnorm(n)
+N = rnorm(n, M)
+K = rnorm(n, N - M)
+d_sim = data.frame(K=K, M=M, N=N)
+```
+
+We can create the other DAGs analogously...
+
+```{r}
+## M -> K <- N
+## N -> M
+N = rnorm(n)
+M = rnorm(n, N)
+K = rnorm(n, N - M)
+d_sim2 = data.frame(K=K, M=M, N=N)
+
+## M -> K <- N
+## M <- U -> N
+U = rnorm(n)
+N = rnorm(n, U)
+M = rnorm(n, U)
+K = rnorm(n, N - M)
+d_sim3 = data.frame(K=K, M=M, N=N)
+```
+
+For a single dag, we can use `dagitty` to draw all of the equivalent DAGs.
+
+```{r}
+dag5.7 = dagitty( "dag{  M -> K <- N  M -> N}")
+coordinates(dag5.7) = list( x=c(M=0,K=1,N=2), y=c(M=0.5,K=1,N=0.5))
+MElist = equivalentDAGs(dag5.7) 
+
+drawdag(MElist) 
+```
+
+We can also consider categorical variables, where the labels of a column are 
+discrete and unordered. We can encode this in a regression using dummy/indicator
+variables. Let's revisit the `Howell1` dataset...
+
+```{r}
+data(Howell1)
+d <- Howell1
+d$sex <- ifelse( d$male==1, 2, 1) 
+```
+
+An important thing to know is not to explicitly take a column of index variables
+for each categorical variable. Instead, we can use index variables to have two
+alpha for each gender...
+
+```{r}
+m5.8 = quap(
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a[sex],
+    a[sex] ~ dnorm(178, 20),
+    sigma ~ dunif(0, 50)
+  ),
+  data=d
+)
+
+precis(m5.8, depth = 2)
+```
+
+It's important to get used to indexing now because it will be important for when
+we move to multi-level/hierarchical models. 
+
+Note that `precis` hides vector and matrix values by default. By adding this 
+`depth` parameter to the function it will show the relevant things.
+
+```{r}
+post = extract.samples(m5.8)
+post$diff_fm = post$a[,1] - post$a[,2]
+precis( post, depth=2)
+```
+
+When we sample from the posterior distribution we can show the expected 
+difference between the genders through the `contrast` with `diff_fm`.
+
+We can also apply this to a dataset which has 3 categories such as `d.m`
+
+```{r}
+d.m$clade_id <- as.integer( d.m$clade)  
+d.m$K <- standardize( d.m$kcal.per.g)  
+
+m5.9 <- quap(  
+  alist(  
+    K ~ dnorm( mu, sigma),  
+    mu <- a[clade_id],  
+    a[clade_id] ~ dnorm( 0, 0.5),  
+    sigma ~ dexp( 1)  
+    ),
+  data=d.m
+  )  
+
+labels = paste( "a[", 1:4,"]:", levels(d.m$clade), sep="")  
+plot( precis( m5.9, depth=2, pars="a"), labels=labels,  
+      xlab="expected kcal (std)")
+```
+

@@ -1,0 +1,469 @@
+---
+title: 'Statistical Rethinking Problems: Chapter 2'
+author: "Simon Thornewill von Essen"
+date: "2024-03-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+## 2E1
+
+Which of the expressions below correspond to the statement: *the probability of
+rain on Monday*
+
+$$P(\textrm{rain}) \\
+P(\textrm{rain}|\textrm{Monday}) \\
+P(\textrm{Monday}|\textrm{rain}) \\
+\frac{P(\textrm{rain, Monday})}{P(\textrm{Monday})}$$
+
+My answer is $P(\textrm{rain}|\textrm{Monday})$ because if something happen on
+Monday then we are conditioning on it. The first one is the probability that
+it rains without conditioning on anything, while the next is the probability 
+it is Monday given that it rains.
+
+The last one looks like a posterior distribution of some kind, but I don't think
+it's what we're looking for.
+
+## 2E2 
+
+Which of the following statements corresponds to the expression 
+$P(\textrm{Monday}|\textrm{rain})$
+
+1. The probability of rain on Monday
+2. The probability of rain, given that it is Monday
+3. The probability that it is Monday, given that it is raining
+4. The probability that it is Monday and that it is raining
+
+The answer is 3, because it is the probability that it is Monday given that it
+is raining. It cannot be 1 or 2 because it's not the probability that it is
+raining to start with. It's also not a joint probability as in 4, which would
+be $P(\textrm{rain}, \textrm{Monday})$.
+
+## 2E3 
+
+Skip...
+
+## 2E4
+
+The Bayesian statistician Bruno de Finetti began his 1973 book on probability
+theory with the declaration "PROBABILITY DOES NOT EXIST." The capitals appeared
+in the original, so I imagine de Finetti wanted us to shout this statement. 
+What he meant is that probability is a device for describing uncertainty from
+the perspective of an observer with limited knowledge; it has no objective 
+reality. Discuss the globe tossing example from the chapter, in light of this
+statement. What does it mean to say "the probability of water is 0.7"?
+
+In order for something to be uncertain we simply don't have access to what the
+true value for something is so by saying that the probability of water takes a
+certain value we quantify that uncertainty using a parameter value. However,
+we don't know if this parameter is true either and so we can try to encode that
+uncertainty further in more complex ways.
+
+## 2M1
+
+Recall the globe tossing model from the chapter. Compute and plot the grid 
+approximate posterior dist for each of the following sets of observations. In
+each case, assume a uniform prior for p.
+
+1. W, W, W
+2. W, W, W, L
+3. L, W, W, L, W, W, W
+
+```{r}
+data = c(1, 1, 1)
+
+grid_prior = seq(0, 1-0.001, 0.001)
+prior = rep(1, 1000)
+
+grid.df = data.frame(params=grid_prior,
+                     prior=prior)
+
+grid.df["posterior_WWW"] = dbinom(sum(data), length(data), grid_prior)
+grid.df["posterior_WWW"] = grid.df["posterior_WWW"]/sum(grid.df["posterior_WWW"])
+
+head(grid.df)
+
+```
+We can now plot the posterior.
+
+```{r}
+ggplot(grid.df, aes(x = params, y = posterior_WWW)) +
+  geom_line() +
+  labs(x = "Params", y = "Posterior") +
+  ggtitle("Posterior Plot")
+```
+
+Now we can do the same for if we were to draw an L, we can use the same 
+posterior before as our prior but I calculated it from scratch because it was
+easy enough.
+
+```{r}
+grid.df["posterior_WWWL"] = dbinom(3, 4, grid_prior)
+grid.df["posterior_WWWL"] = grid.df["posterior_WWWL"] /
+  sum(grid.df["posterior_WWWL"])
+
+ggplot(grid.df, aes(x = params, y = posterior_WWWL)) +
+  geom_line() +
+  labs(x = "Params", y = "Posterior") +
+  ggtitle("Posterior Plot")
+```
+
+So now for the final one we have 5 positives out of 7 trials...
+
+```{r}
+grid.df["posterior_WWWLWWL"] = dbinom(5, 7, grid_prior)
+grid.df["posterior_WWWLWWL"] = grid.df["posterior_WWWLWWL"] /
+  sum(grid.df["posterior_WWWL"])
+
+ggplot(grid.df, aes(x = params, y = posterior_WWWLWWL)) +
+  geom_line() +
+  labs(x = "Params", y = "Posterior") +
+  ggtitle("Posterior Plot")
+```
+
+```{r}
+head(grid.df)
+```
+
+## 2M2
+
+Now assume a prior for p that is equal to zero when p < 0.5 and is a positive 
+constant when  p ≥ 0.5. Again compute and plot the grid approximate posterior
+distribution for each of the sets of observations in the problem just above
+
+```{r}
+grid.df.new = grid.df
+grid.df.new["prior"] = append(rep(0, 500), rep(1, 500))
+
+grid.df.new["posterior_WWW"] = grid.df.new["prior"]*grid.df["posterior_WWW"]
+grid.df.new["posterior_WWW"] = grid.df.new["posterior_WWW"]/
+  sum(grid.df.new["posterior_WWW"])
+
+grid.df.new["posterior_WWWL"] = grid.df.new["prior"]*grid.df["posterior_WWWL"]
+grid.df.new["posterior_WWWL"] = grid.df.new["posterior_WWWL"]/
+  sum(grid.df.new["posterior_WWWL"])
+
+grid.df.new["posterior_WWWLWWL"] = grid.df.new["prior"]*grid.df["posterior_WWWLWWL"]
+grid.df.new["posterior_WWWLWWL"] = grid.df.new["posterior_WWWLWWL"]/
+  sum(grid.df.new["posterior_WWWLWWL"])
+
+head(grid.df.new)
+```
+
+Now we can comvine the columns and plot
+
+```{r}
+grid.df.new.pivot = pivot_longer(grid.df.new, 
+                            cols = starts_with("posterior"), 
+                            names_to = "data", 
+                            values_to = "posterior") %>%
+  mutate(data = sub("^posterior_", "", data))
+
+ggplot(grid.df.new.pivot, aes(x = params, y = posterior, color=data)) +
+  geom_line() +
+  labs(x = "Params", y = "Posterior") +
+  ggtitle("Posterior Plot")
+
+```
+
+## 2M3
+
+Suppose there are two globes, one for Earth and one for Mars. The Earth globe is 
+70% covered  in water. The Mars globe is 100% land. Further suppose that one of 
+these globes—you don’t know which— was tossed in the air and produced a “land” 
+observation. Assume that each globe was equally  likely to be tossed. Show that 
+the posterior probability that the globe was the Earth, conditional on seeing
+"land" ($P(\textrm{Earth}|\textrm{land})$), is 0.23.
+
+```{r}
+
+df.planets = data.frame(
+  planet = c("Earth", "Mars"),
+  prior = rep(0.5, 2),
+  p_land = c(0.3, 1)
+) %>%
+  mutate(likelihood=dbinom(1, 1, p_land),
+         posterior=likelihood*prior/sum(likelihood*prior))
+
+df.planets
+
+```
+
+We can see from the table that the posterior distribution that we have earth 
+given that we saw land once (and the probabilities given) is 23%.
+
+## 2M4
+
+Suppose you have a deck with only three cards. Each card has two sides, and each 
+side is either black or white. The cards are as follows:
+
+1. One card has two black sides. 
+2. The second card has one black and one white side. 
+3. The  third card has two white sides. 
+
+Now suppose all three cards are placed in a bag and shuffled. Someone  reaches 
+into the bag and pulls out a card and places it flat on a table. A black side is 
+shown facing up, but you don’t know the color of the side facing down. 
+
+Show that the probability that the other side is  also black is 2/3. 
+
+Hint: Use the counting method (Section 2 of the chapter) to approach this 
+problem. This  means counting up the ways that each card could produce the 
+observed data (a black side facing up on the table.
+
+```{r}
+df.cards = data.frame(
+  card_side_1_is_black=c(1, 1, 0),
+  card_side_2_is_black=c(1, 0, 0),
+  prior=rep(1/3, 3)
+) %>%
+  mutate(ways=card_side_1_is_black + card_side_2_is_black,
+         posterior=ways*prior/sum(ways*prior))
+
+df.cards
+```
+
+We can see that the probability that we chose the double sided black card is 2/3
+or or ~66%.
+
+## 2M5 
+
+Now suppose there are four cards: B/B, B/W, W/W, and another B/B. Again suppose 
+a card is  drawn from the bag and a black side appears face up. Again calculate 
+the probability that the other  side is black.
+
+```{r}
+df.cards = data.frame(
+  card_side_1_is_black=c(1, 1, 0),
+  card_side_2_is_black=c(1, 0, 0),
+  prior=c(2/4, 1/4, 1/4)
+) %>%
+  mutate(ways=card_side_1_is_black + card_side_2_is_black,
+         posterior=ways*prior/sum(ways*prior))
+
+df.cards
+```
+
+this should be the same as below...
+
+```{r}
+df.cards = data.frame(
+  card_side_1_is_black=c(1, 1, 0, 1),
+  card_side_2_is_black=c(1, 0, 0, 1),
+  prior=c(1/4, 1/4, 1/4, 1/4)
+) %>%
+  mutate(ways=card_side_1_is_black + card_side_2_is_black,
+         posterior=ways*prior/sum(ways*prior))
+
+df.cards %>%
+  filter((card_side_1_is_black==1) & (card_side_2_is_black==1)) %>%
+  summarise(posterior_prob=sum(posterior))
+```
+
+Indeed, we can see that the two methods are equivalent. 
+
+## 2M6
+
+Imagine that black ink is heavy, and so cards with black sides are heavier than 
+cards with white  sides. As a result, it’s less likely that a card with black 
+sides is pulled from the bag. 
+
+So again assume there are three cards: B/B, B/W, and W/W. 
+
+After experimenting a number of times, you conclude that for every way to pull 
+the B/B card from the bag, there are 2 ways to pull the B/W card and 3 ways to  
+pull the W/W card. Again suppose that a card is pulled and a black side appears 
+face up. Show that  the probability the other side is black is now 0.5. Use the 
+counting method, as before. 
+
+```{r}
+df.cards = data.frame(
+  card_side_1_is_black=c(1, 1, 0),
+  card_side_2_is_black=c(1, 0, 0),
+  prior=c(1/6, 2/6, 3/6)
+) %>%
+  mutate(ways=card_side_1_is_black + card_side_2_is_black,
+         posterior=ways*prior/sum(ways*prior))
+
+df.cards
+```
+
+It's really interesting how the number of ways to pull the results actually gets
+encoded into the prior, the odds we pull the double sided black card is 2:1.
+
+## 2m7
+
+Assume again the original card problem, with a single card showing a black side 
+face up. 
+
+Before looking at the other side, we draw another card from the bag and lay it 
+face up on the table. The face that is shown on the new card is white. Show that 
+the probability that the first card, the one showing a black side, has black on 
+its other side is now 0.75. Use the counting method, if you can. 
+
+Hint: Treat this like the sequence of globe tosses, counting all the ways to see 
+each observation, for each possible first card.
+
+It was difficult to represent this in code so the best way will be as follows
+
+* black-black: 2 ways
+  * white-black: 1 way
+  * white-white: 2 ways
+* black-white: 1 way
+  * black-black: Not possible, 0
+  * white-white: 2 way
+* white-white: Not possible, 0
+
+You then find the total number of ways we could have seen the data
+
+```{r}
+bb = 2
+wb_bb = 1
+ww_bb = 2
+wb = 1
+bb_wb = 0
+ww_wb = 2
+
+p_bb = bb * (wb_bb + ww_bb)
+
+p_wb = wb * (ww_wb)
+
+p_bb / (p_bb + p_wb)
+
+```
+
+So, I think my problem was that I was trying to add column together...
+
+
+```{r}
+cards <- c("Black-Black", "Black-White", "White-White")
+combinations <- expand.grid(Card_Type1 = cards, 
+                            Card_Type2 = cards) %>%
+  filter(Card_Type1 != Card_Type2) %>%
+  arrange(Card_Type1, Card_Type2) %>%
+  mutate(Ways_Card1=c(2, 2, 1, 1, 0, 0),
+         Ways_Card2=c(1, 2, 0, 2, 0, 1),
+         prod=Ways_Card1*Ways_Card2,
+         post=prod/sum(prod))
+
+combinations %>%
+  filter(Card_Type1=="Black-Black") %>%
+  summarise(post_agg=sum(post))
+```
+## 2h1
+
+Suppose there are two species of panda bear. Both are equally common in the wild 
+and live  in the same places. They look exactly alike and eat the same food, and 
+there is yet no genetic assay capable of telling them apart. They differ 
+however in their family sizes. 
+
+* Species A gives birth to twins 10% of the time, otherwise birthing a single 
+infant. 
+* Species B births twins 20% of the time, otherwise birthing singleton infants. 
+
+Assume these numbers are known with certainty, from many years of field
+research.
+
+Now suppose you are managing a captive panda breeding program. You have a new 
+female panda  of unknown species, and she has just given birth to twins. What is
+the probability that her next birth will be twins.
+
+I suppose that what we'd want to do is calculate the probability of the species
+
+```{r}
+df.pandas = data.frame(
+  panda_type=c("A", "B"),
+  prior=c(0.5, 0.5),
+  likelihood=c(0.1, 0.2)
+) %>%
+  mutate(post=prior*likelihood/sum(prior*likelihood),
+         next_post=c(0.1, 0.2),
+         p_next_post=post*next_post)
+
+df.pandas
+```
+
+We know that we have one set of twins, so it's just a matter of finding the 
+likelihood of the next set of twins depending on the type
+
+```{r}
+sum(df.pandas["p_next_post"])
+```
+
+## 2h2 
+
+Recall all the facts from the problem above. Now compute the probability that 
+the panda we  have is from species A, assuming we have observed only the first 
+birth and that it was twins.
+
+We already know from the table above that it's 1/3.
+
+## 2H3 
+
+Continuing on from the previous problem, suppose the same panda mother has a 
+second birth  and that it is not twins, but a singleton infant. Compute the 
+posterior probability that this panda is  species A. 
+
+```{r}
+df.pandas = data.frame(
+  panda_type=c("A", "B"),
+  prior=c(1/3, 2/3),
+  likelihood=c(1-0.1, 1-0.2)
+) %>%
+  mutate(post=prior*likelihood/sum(prior*likelihood))
+
+df.pandas
+```
+Re-tweaking the priors and the likelihood gives us the right answer.
+
+## 2h4 
+
+A common boast of Bayesian statisticians is that Bayesian inference makes it 
+easy to use all of  the data, even if the data are of different types. 
+
+So suppose now that a veterinarian comes along who has a new genetic test that 
+she claims can  identify the species of our mother panda. But the test, like all 
+tests, is imperfect. This is the information you have about the test:
+
+* The probability it correctly identifies a species A panda is 0.8.
+* The probability it correctly identifies a species B panda is 0.65.
+
+The vet administers the test to your panda and tells you that the test is 
+positive for species A. 
+
+First, ignore your previous information from the births and compute the 
+posterior probability that your panda is species A. Then redo your calculation, 
+now using the birth data as well.
+
+```{r}
+df.pandas = data.frame(
+  panda_type=c("A", "B"),
+  prior=c(1/2, 1/2),
+  likelihood=c(0.8, 1-0.65)
+) %>%
+  mutate(post=prior*likelihood/sum(prior*likelihood))
+
+df.pandas
+```
+
+```{r}
+df.pandas = data.frame(
+  panda_type=c("A", "B"),
+  prior=c(1/2, 1/2),
+  likelihood=c(0.8, 1-0.65)
+) %>%
+  mutate(post_test=prior*likelihood/sum(prior*likelihood),
+         like_twins=c(0.1, 0.2),
+         post_test_twins=post_test*like_twins/sum(post_test*like_twins),
+         like_single=1-like_twins,
+         post_test_twins_single=post_test_twins*like_single/
+           sum(post_test_twins*like_single)
+         )
+
+df.pandas
+```

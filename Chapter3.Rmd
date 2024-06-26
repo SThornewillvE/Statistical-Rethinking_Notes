@@ -1,0 +1,402 @@
+---
+title: 'Statistical Rethinking Problems: Chapter 3'
+author: "Simon Thornewill von Essen"
+date: "2024-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rethinking)
+library(tidyverse)
+data(homeworkch3)
+```
+
+The easy section comes with code for us to check...
+
+```{r}
+p_grid = seq(0, 1, length.out=1000)
+prior = rep(1, 1000)
+likelihood = dbinom(6, 9, p_grid)
+posterior = likelihood * prior / sum(likelihood * prior)
+
+set.seed(100)
+
+samples = sample(p_grid, prob = posterior, size=1e4, replace = TRUE)
+```
+
+## 3e1
+
+How much posterior probability lies below `p = 0.2`
+
+```{r}
+mean(samples < 0.2)
+```
+
+## 3e2
+
+How much posterior probability lies above `p = 0.8`
+
+```{r}
+mean(samples > 0.8)
+```
+
+## 3e3
+
+How much posterior probability lies beteen `0.2 < p < 0.8`
+
+```{r}
+mean((0.2 < samples) & (samples < 0.8))
+```
+
+## 3e4
+
+20% of the posterior probability lies below which value of p?
+
+```{r}
+quantile(samples, 0.2)
+```
+
+## 3e5
+
+20% of the posterior probability lies above which value of p?
+
+```{r}
+quantile(samples, 1-0.2)
+```
+
+## 3e6
+
+Which values of p contain the narrowest interval equal to 66% of the posterior
+probability?
+
+```{r}
+HPDI(samples, 0.66)
+```
+
+## 3e7
+
+Which values of p contain 66% of the posterior probability, assuming equal 
+posterior probability below and above the interval?
+
+
+```{r}
+PI(samples, 0.66)
+```
+
+## 3m1
+
+Suppose the globe tossing data had turned out to be 8 water in 15 tosses. 
+Construct the posterior distribution, using grid approximation. Use the same
+flat prior as before.
+
+```{r}
+p_grid = seq(0, 1, length.out=1000)
+prior = rep(1, 1000)
+likelihood = dbinom(8, 15, p_grid)
+posterior = likelihood * prior / sum(likelihood * prior)
+```
+
+## 3m2
+
+Draw 10k samples from the grid approximation from above. Then use the samples 
+to calculate the 90% HPDI for p.
+
+```{r}
+samples = sample(p_grid, prob = posterior, size=1e4, replace = TRUE)
+
+HPDI(samples, 0.9)
+```
+
+## 3m3
+
+Construct a posterior predictive check for this model and data. This means 
+simulate the distribution of samples, averaging over the posterior uncertainity
+in p. What is the probability of observing 8 water in 15 tosses?
+
+```{r}
+post.pred = rbinom(1e4, size=15, prob = samples)
+
+mean(post.pred == 8)
+```
+
+## 3m4
+
+Using the posterior distribution constructed from the new (8/15) data, now 
+calculate the probability of observing 6 water in 9 tosses.
+
+```{r}
+post.pred = rbinom(1e4, size=9, prob = samples)
+
+mean(post.pred == 6)
+```
+
+## 3m5
+
+Start over at 3m1, but now use a prior that is zero below 0.5 and constant above
+0.5. This corresponds to prior information that the majority of the Earth's 
+surface is water. Repeat each problem above and compare the inferences. What
+difference does the better prior make? If it helps, compare inferences (using 
+both priors) to the true value of p=0.7
+
+
+
+```{r}
+p_grid = seq(0, 1, length.out=1000)
+prior = append(rep(0, 500), rep(1, 500))
+likelihood = dbinom(8, 15, p_grid)
+posterior = likelihood * prior / sum(likelihood * prior)
+```
+
+Here, I use the new prior.
+
+```{r}
+samples = sample(p_grid, prob = posterior, size=1e4, replace = TRUE)
+
+HPDI(samples, 0.9)
+```
+
+We can see that the new HPDI has little probability density underneath 0.9.
+
+```{r}
+post.pred = rbinom(1e4, size=15, prob = samples)
+
+mean(post.pred == 8)
+```
+
+The probability of what we saw is now higher.
+
+```{r}
+simplehist(post.pred)
+```
+
+Just wanted to quickly visualise the posterior predictive distribution.
+
+
+```{r}
+post.pred = rbinom(1e4, size=9, prob = samples)
+
+mean(post.pred == 6)
+```
+
+Meanwhile getting a lower value is less likely. 
+
+# 3m6
+
+Suppose you want to estimate the Earth's proportion of water very precisely. 
+Specifically, you want the 99% percentile interval of the posterior distribution
+of p to be only 0.05 wide. This means the distance between the upper and lower
+bound of the interval should be 0.05. How many times will you have to toss
+the globe to do this? 
+
+```{r}
+# TODO: Make this code more efficient
+df.power = data.frame(
+  tosses = seq(100, 5000, 200)
+)
+
+PI_lower = rep(1, 25)
+PI_upper = rep(1, 25)
+
+p_grid = seq(0, 1, length.out=1000)
+prior = rep(1, 1000)
+
+for (i in seq_along(seq(100, 5000, 200))){
+  PI_lower.i = rep(0, 1000)
+  PI_upper.i = rep(0, 1000)
+  
+  for (j in seq(1, 1000)){
+  
+    tosses = seq(100, 5000, 200)[i]
+    obs = rbinom(1, size = tosses, prob = 0.7)
+
+    likelihood = dbinom(obs, tosses, p_grid)
+    posterior = likelihood * prior / sum(likelihood * prior)
+    samples = sample(p_grid, prob = posterior, size=1e4, replace = TRUE)
+    samples.PI = c(quantile(samples, (0.01)),
+                   quantile(samples, 1-(0.01)))
+    
+    
+    PI_lower.i[j] = samples.PI[1]
+    PI_upper.i[j] = samples.PI[2]
+  }
+  PI_lower[i] = mean(PI_lower.i)
+  PI_upper[i] = mean(PI_upper.i)
+}
+
+df.power["PI_lower"] = PI_lower
+df.power["PI_upper"] = PI_upper
+
+head(df.power)
+```
+
+Now, we can visualise the result
+
+```{r}
+
+ggplot(df.power, aes(x = tosses)) +
+  geom_ribbon(aes(ymin = PI_lower, ymax = PI_upper), 
+              fill = "blue", 
+              alpha = 0.3) +
+  geom_line(aes(y = PI_lower), color = "blue") +
+  geom_line(aes(y = PI_upper), color = "blue") +
+  labs(x = "Tosses", y = "99% Percentile Interal") +
+  theme_minimal()
+
+```
+
+```{r}
+df.power %>%
+  mutate(diff=PI_upper-PI_lower,
+         diff_lt_05=diff<0.05) %>%
+  filter(diff_lt_05==TRUE) %>%
+  summarise(min_tosses=min(tosses))
+```
+
+So, now I'd like to think about how I can make the code more efficient.
+
+* It uses grid approximation to find the posterior, this may look a little different if you were using `quap` or MCMC.
+* It's not that readable
+	* ~~Vectors should be named variables~~
+	* Turn tosses into a vector and get out vector of obs
+	* Do the 1000 samples at once
+
+```{r}
+tosses_vec = seq(100, 5000, 50)
+n.samples = 2000
+grid.resolution = 1000
+
+df.power = data.frame(
+  tosses = tosses_vec
+)
+
+PI_lower = rep(1, length(tosses_vec))
+PI_upper = rep(1, length(tosses_vec))
+
+p_grid = seq(0, 1, length.out=grid.resolution)
+prior = rep(1, grid.resolution)
+
+for (i in seq_along(tosses_vec)){
+  tosses = tosses_vec[i]
+  obs = rbinom(n.samples, size=tosses, prob = 0.7)
+
+  likelihoods = outer(obs, p_grid, 
+                     function(x, p) dbinom(x, size=tosses, prob=p))
+
+  posteriors = likelihoods * t(replicate(n.samples, prior)) / 
+    rowSums(likelihoods * t(replicate(n.samples, prior)))
+
+  samples = apply(posteriors, 1, 
+                   function(row_probs) sample(p_grid, 
+                                              size = 1000, 
+                                              replace = TRUE, 
+                                              prob = row_probs))
+  
+  samples.PI = apply(samples, 1, 
+                     function(sample) quantile(sample, 
+                                               c(0.01, 1-0.01))) %>%
+    apply(1, function(x) mean(x))
+
+  PI_lower[i] = samples.PI[1]
+  PI_upper[i] = samples.PI[2]
+}
+
+df.power["PI_lower"] = PI_lower
+df.power["PI_upper"] = PI_upper
+
+head(df.power)
+```
+
+# 3h1
+
+Using grid approximation, compute the posterior distribution for the probability 
+of a birth being a boy. Assume a uniform prior probability. Which parameter 
+value maximizes the posterior probability?
+
+```{r}
+# Data is in birth1 and birth2, which shows two 100 child families
+births = append(birth1, birth2)
+
+p_grid = seq(0.001, 1, 0.001)
+prior = rep(1, 1000)
+
+n_boys = sum(births)
+n_births = length(births)
+
+likelihood = dbinom(x=n_boys, size=n_births, prob=p_grid)
+posterior = likelihood * prior / sum(likelihood * prior) 
+
+plot(p_grid, posterior)
+
+```
+```{r}
+p_grid[which.max(posterior)]
+```
+
+We can see that roughly 55% maximises the posterior.
+
+# 3h2
+
+Using the sample function, draw 10,000 random parameter values from the 
+posterior distribution you calculated above. Use these sample to estimate the 
+50%, 89%, and 97% highest posterior density intervals.
+
+```{r}
+post.sample = sample(p_grid, size=1e4, replace=TRUE, prob=posterior)
+
+HPDI(post.sample, prob=c(0.5, 0.89, 0.97))
+```
+
+# 3h3
+
+Use rbinom to simulate 10,000 replicates of 200 births. You should end up with 
+10,000 numbers, each one a count of boys out of 200 births. Compare the 
+distribution of predicted numbers of boys to the actual count in the data (111 
+boys out of 200 births). There are many good ways to visualize the simulations, 
+but the dens command (part of the rethinking package) is probably the easiest way 
+in this case. Does it look like the model fits the data well? That is, does the 
+distribution of predictions include the actual observation as a central, likely 
+outcome?
+
+```{r}
+birth.sim = rbinom(size = 200, prob = post.sample, n = 1e4)
+
+hist(birth.sim)
+abline(v = 111, col = "red")
+```
+
+# 3h4
+
+Now compare 10,000 counts of boys from 100 simulated first-borns, only the number 
+of boys in the first births, birth1. How does the model look in this light?
+
+```{r}
+birth.sim = rbinom(size = 100, prob = post.sample, n = 1e4)
+
+hist(birth.sim)
+abline(v = sum(birth1), col = "red")
+```
+
+# 3h5 
+
+The model assumes that sex of first and second births are independent. To 
+check this assumption, focus now on second births that followed female first 
+borns. Compare 10,000 simulated counts of boys to only those second births that 
+followed girls. To do this correctly, you need to count the number of first 
+borns who were girls and simulate that many births, 10,000 times. Compare the 
+counts of boys in your simulations to the actual observed count of boys 
+following girls. How does the model look in this light? Any guesses what is 
+going on in these data?
+
+```{r}
+fb_girls = length(birth1) - sum(birth1)
+
+fb_girls.sim = rbinom(1e4, size = fb_girls, prob = post.sample)
+
+obs_bfg = sum(birth2[which(birth1 == 0)])
+
+hist(fb_girls.sim)
+abline(v = obs_bfg, col = "red")
+```
+```

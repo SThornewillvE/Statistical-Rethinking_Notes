@@ -1,0 +1,135 @@
+---
+title: 'Statistical Rethinking Problems: Chapter 7'
+author: "Simon Thornewill von Essen"
+date: "2024-06-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rethinking)
+library(reshape2)
+library(tidyverse)
+```
+
+## 7e1
+
+State the three motivating criteria that define information entropy. Try to 
+express each in your own words. 
+
+The three motivating criterion are as follows;
+1. Continuous
+2. The higher, the more disorder
+3. Additive
+
+## 7e2
+
+Suppose a coin is weighted such that, when it is tossed and lands on a table, 
+it comes up heads 70% of the time. What is the entropy of this coin?  
+
+This coin has two outcomes, `H=0.7` and `T=0.3`. We can put this into a vector
+and then get the entropy of each outcome and add them together.
+
+```{r}
+coin = c(0.7, 0.3)
+
+H = function(p) -1 * sum(p * log(p))
+
+H(coin)
+```
+
+## 7e3
+
+Suppose a four-sided die is loaded such that, when tossed onto a table, it shows 
+“1” 20%, “2”  25%, “3” 25%, and “4” 30% of the time. What is the entropy of this 
+die?
+
+We do the same except now the vector is longer...
+
+```{r}
+d4 = c(0.2, 0.25, 0.25, 0.3)
+
+H(d4)
+```
+
+## 7e4
+
+Suppose another four-sided die is loaded such that it never shows “4”. The other 
+three sides show equally often. What is the entropy of this die? 
+
+```{r}
+d4.2 = c(1/3, 1/3, 1/3, 0)
+
+H(d4.2)
+```
+
+It's interesting that we get a NaN, it must be because we're taking the log of 
+0. We'll need to code something to fix this.
+
+We know using L'Hôpital's rule that the limit as logs go to zero that you get 
+zero so let's add that.
+
+```{r}
+H = function(p){
+  Hi = -1 * (d4.2 * log(d4.2))
+  Hi = replace(Hi, is.na(Hi), 0)
+  return(sum(Hi))
+}
+
+H(d4.2)
+```
+
+I think that's interesting because it implies that this dice has the same amount
+of disorder as a d3.
+
+```{r}
+H(c(1/3, 1/3, 1/3))
+```
+
+## 7m1
+
+Pass.
+
+## 7m2
+
+Pass.
+
+## 7m3
+
+When comparing models with an information criterion, why must all models be fit 
+to exactly  the same observations? What would happen to the information 
+criterion values, if the models were fit to different numbers of observations? 
+Perform some experiments, if you are not sure.
+
+We calculate information criterion to save on time that we would have spent 
+re-fitting models to data. By shifting the underlying data we add uncertainty 
+to the predictions that could throw off the information criterion.
+
+We'd have to ask if the performance is better/worse simply because of random 
+chance where we may have gotten a high-leverage point by chance or if these same
+kinds of points were somehow absent. 
+
+This is especially true if the number of values change because then the leverage
+outliers have will be smaller on the fit. 
+
+## 7m4
+
+What happens to the effective number of parameters, as measured by PSIS or WAIC, 
+as a prior becomes more concentrated?
+
+I'd imagine that the number of effective parameters will decrease. This is 
+because having a very confident prior reduces the amount of flexibility that a 
+model has, which means that it has fewer effective paramters.
+
+## 7m5
+
+Pass.
+
+## 7m6
+
+Pass.
+
+## 7h1
+
+`data(Laffer)` isn't working. Pass.
